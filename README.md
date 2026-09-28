@@ -43,3 +43,33 @@ To change which drugs count as the $200 tier, edit `biologic_ref` in
 - 7,919 providers (~5% of volume) have no NPPES specialty and are excluded from the comparison.
 - `affiliation_npi_count` counts every provider at an institution, not only these specialties.
 - The full list of source issues and how each is handled is in the header of `sql/01`.
+
+---
+
+# Part 2: Dermatology provider segmentation
+
+## Run it
+
+Open `part2_clustering.ipynb` in Colab, set the same `BILLING_PROJECT` / `TARGET` as Part 1, set
+`REBUILD = True` the first time, and run all. It builds its own tables from
+`tandem-interview.takehome_wu_timothy.prescriptions` (~30 MB scan) and does not touch Part 1 objects.
+
+## Layout
+
+| File | What it does |
+|---|---|
+| `sql/10_derm_features.sql` | `derm_rx_clean` (one row per script, with drug class and payer group) and `derm_prescriber_features` (one row per prescriber, clustering inputs prefixed `f_`) |
+| `forus_segments.py` | Feature list with rationale, k selection (silhouette, Davies-Bouldin, bootstrap stability), k-means fit with deterministic segment names, profiles, routing rules (shallow decision tree), robustness checks, practice roll-up, Ops workload and staffing forecast |
+| `part2_clustering.ipynb` | Runs everything end to end, with validation asserts and charts |
+
+## Reuse
+
+```python
+import forus_segments as fs
+seg = fs.fit_segments(feats, k=4)                 # refit
+seg.predict(new_prescribers)                      # assign new providers to existing segments
+fs.staffing_forecast(current, {"Biologic Specialists": 2.0})   # FTE if a segment doubles
+```
+
+Set `WRITE_BACK = True` in the notebook to save assignments to `{TARGET}.derm_prescriber_segments`
+for dashboards or routing.

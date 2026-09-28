@@ -37,28 +37,52 @@ GROUP BY 1, 2, 3, 4;
 -- affiliation) for affiliated providers, or the provider itself if unaffiliated.
 -- This is the unit a GTM team actually sells to, so it drives both the
 -- acquisition-cost side of the framework and the targeting list (Part 1b).
+--
+-- champion_* = the target's highest-volume biologic prescriber in this specialty
+-- (ties -> more total volume, then lowest NPI): the natural first contact inside
+-- an institution. champion_share_of_biologic shows how dependent the target's
+-- biologic volume is on that one person.
 -- =============================================================================
 
 CREATE OR REPLACE VIEW `{target}.sales_targets` AS
+WITH base AS (
+  SELECT
+    *,
+    COALESCE(CAST(primary_affiliated_id AS STRING), CONCAT('npi_', CAST(hashed_npi AS STRING))) AS target_id
+  FROM `{target}.npi_summary`
+),
+agg AS (
+  SELECT
+    specialty,
+    is_candidate_specialty,
+    target_id,
+    is_affiliated,
+    -- firm_type is per (npi, institution) pair and differs across NPIs for ~3K
+    -- institutions, so take the most common label among this specialty's providers
+    APPROX_TOP_COUNT(COALESCE(firm_type, 'Unaffiliated'), 1)[OFFSET(0)].value AS firm_type,
+    ANY_VALUE(institution_size)                     AS institution_size,
+    ANY_VALUE(COALESCE(region, 'Unknown'))          AS region,
+    ANY_VALUE(affiliation_npi_count)                AS institution_npi_count,  -- all specialties
+    COUNT(*)                                        AS n_providers,             -- this specialty only
+    COUNTIF(is_biologic_prescriber)                 AS n_biologic_prescribers,
+    SUM(biologic_pairs)                             AS biologic_pairs,
+    SUM(other_pairs)                                AS other_pairs,
+    SUM(biologic_new_pairs)                         AS biologic_new_pairs,
+    SUM(other_new_pairs)                            AS other_new_pairs,
+    SUM(biologic_pairs_sens)                        AS biologic_pairs_sens,
+    SUM(other_pairs_sens)                           AS other_pairs_sens,
+    APPROX_TOP_COUNT(top_biologic_brand, 1)[SAFE_OFFSET(0)].value AS top_biologic_brand,
+    ARRAY_AGG(STRUCT(hashed_npi, biologic_pairs, biologic_new_pairs, total_pairs, top_biologic_brand)
+              ORDER BY biologic_pairs DESC, total_pairs DESC, hashed_npi
+              LIMIT 1)[OFFSET(0)]                   AS champion
+  FROM base
+  GROUP BY specialty, is_candidate_specialty, target_id, is_affiliated
+)
 SELECT
-  specialty,
-  is_candidate_specialty,
-  COALESCE(CAST(primary_affiliated_id AS STRING), CONCAT('npi_', CAST(hashed_npi AS STRING))) AS target_id,
-  is_affiliated,
-  -- firm_type is per (npi, institution) pair and differs across NPIs for ~3K
-  -- institutions, so take the most common label among this specialty's providers
-  APPROX_TOP_COUNT(COALESCE(firm_type, 'Unaffiliated'), 1)[OFFSET(0)].value AS firm_type,
-  ANY_VALUE(institution_size)                     AS institution_size,
-  ANY_VALUE(COALESCE(region, 'Unknown'))          AS region,
-  ANY_VALUE(affiliation_npi_count)                AS institution_npi_count,  -- all specialties
-  COUNT(*)                                        AS n_providers,             -- this specialty only
-  COUNTIF(is_biologic_prescriber)                 AS n_biologic_prescribers,
-  SUM(biologic_pairs)                             AS biologic_pairs,
-  SUM(other_pairs)                                AS other_pairs,
-  SUM(biologic_new_pairs)                         AS biologic_new_pairs,
-  SUM(other_new_pairs)                            AS other_new_pairs,
-  SUM(biologic_pairs_sens)                        AS biologic_pairs_sens,
-  SUM(other_pairs_sens)                           AS other_pairs_sens,
-  APPROX_TOP_COUNT(top_biologic_brand, 1)[SAFE_OFFSET(0)].value AS top_biologic_brand
-FROM `{target}.npi_summary`
-GROUP BY specialty, is_candidate_specialty, target_id, is_affiliated;
+  * EXCEPT (champion),
+  champion.hashed_npi                                          AS champion_npi,
+  champion.biologic_pairs                                      AS champion_biologic_pairs,
+  champion.biologic_new_pairs                                  AS champion_biologic_new_pairs,
+  champion.top_biologic_brand                                  AS champion_top_brand,
+  SAFE_DIVIDE(champion.biologic_pairs, biologic_pairs)         AS champion_share_of_biologic
+FROM agg;

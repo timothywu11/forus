@@ -215,10 +215,60 @@ def sensitivity(segments: pd.DataFrame, param: str, values: list,
 
 def rank_targets(targets: pd.DataFrame, specialty: str, a: dict = DEFAULT_ASSUMPTIONS,
                  top: int = 50) -> pd.DataFrame:
-    """Targeting list for one specialty, best year-1 ROI first."""
-    e = add_economics(targets[targets["specialty"] == specialty], a)
-    cols = ["target_id", "firm_type", "institution_size", "region", "n_providers",
+    """Targeting list for one specialty, best year-1 ROI first.
+
+    champion_* columns name the institution's highest-volume biologic prescriber
+    (the first contact) and how much of the target's biologic volume they carry.
+    """
+    e = with_firm_group(add_economics(targets[targets["specialty"] == specialty], a))
+    cols = ["target_id", "firm_group", "firm_type", "institution_size", "region", "n_providers",
             "n_biologic_prescribers", "biologic_pairs", "other_pairs", "top_biologic_brand",
-            "contribution", "acquisition_cost", "roi_year1"]
+            "champion_npi", "champion_biologic_pairs", "champion_share_of_biologic",
+            "champion_top_brand", "contribution", "acquisition_cost", "roi_year1"]
     cols = [c for c in cols if c in e]
     return e.sort_values("roi_year1", ascending=False)[cols].head(top).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
+# Targeting breakdowns (Part 1b)
+# ---------------------------------------------------------------------------
+MAJOR_FIRM_TYPES = ("Hospital", "Physician Group", "Unaffiliated")
+
+
+def with_firm_group(df: pd.DataFrame) -> pd.DataFrame:
+    """Add firm_group: Hospital / Physician Group / Unaffiliated / Other facility.
+
+    The 14 cleaned firm types are dominated by hospitals and physician groups;
+    the rest (ASCs, FQHCs, home health, etc.) are small enough to pool.
+    """
+    out = df.copy()
+    ft = out["firm_type"].fillna("Unaffiliated")
+    out["firm_group"] = ft.where(ft.isin(MAJOR_FIRM_TYPES), "Other facility")
+    return out
+
+
+def breakdown(df: pd.DataFrame, specialty: str, by: str | list[str],
+              a: dict = DEFAULT_ASSUMPTIONS) -> pd.DataFrame:
+    """Where a specialty's value sits, by any dimension(s) of segments or targets.
+
+    by: e.g. "institution_size", "firm_group", ["firm_group", "institution_size"],
+        or "region" (targets only). Works on specialty_segments or sales_targets.
+    """
+    by = [by] if isinstance(by, str) else list(by)
+    e = with_firm_group(add_economics(df[df["specialty"] == specialty], a))
+    if "n_sales_targets" not in e:
+        e["n_sales_targets"] = 1
+    g = e.groupby(by, observed=True).agg(
+        providers=("n_providers", "sum"),
+        biologic_prescribers=("n_biologic_prescribers", "sum"),
+        sales_targets=("n_sales_targets", "sum"),
+        biologic_pairs=("biologic_pairs", "sum"),
+        contribution=("contribution", "sum"),
+        acquisition_cost=("acquisition_cost", "sum"),
+    )
+    g["providers_per_target"] = g["providers"] / g["sales_targets"]
+    g["biologic_pairs_per_provider"] = g["biologic_pairs"] / g["providers"]
+    g["contribution_per_target"] = g["contribution"] / g["sales_targets"]
+    g["share_of_contribution"] = g["contribution"] / g["contribution"].sum()
+    g["roi_year1"] = g["contribution"] / g["acquisition_cost"]
+    return g.sort_values("roi_year1", ascending=False)

@@ -205,6 +205,33 @@ def profile(df: pd.DataFrame, labels, cols: list[str] | None = None) -> pd.DataF
     return out
 
 
+# Share columns that are fractions of a prescriber's scripts (so they can be pooled).
+SHARE_COLS = {
+    "Drug mix": ["advanced_share", "generic_share", "branded_other_share"],
+    "Payer mix": ["commercial_share", "government_share", "unknown_ins_share"],
+    "Patient mix": ["peds_share", "senior_share"],
+    "Access": ["bridge_rate", "pa_rate"],
+}
+
+
+def pooled_profile(df: pd.DataFrame, labels) -> pd.DataFrame:
+    """Share of *all scripts in the segment* for each share column (script-weighted).
+
+    Unlike profile() (medians per prescriber), pooled shares within a group add to
+    100% (drug mix, payer mix) and describe the segment's actual workload mix, so this
+    is the table to use for business readers.
+    """
+    d = prepare(df).assign(segment=labels)
+    cols = [c for group in SHARE_COLS.values() for c in group]
+    weighted = d[cols].mul(d["n_rx"], axis=0).groupby(d["segment"]).sum()
+    out = weighted.div(d.groupby("segment")["n_rx"].sum(), axis=0).T
+    total = (d[cols].mul(d["n_rx"], axis=0).sum() / d["n_rx"].sum()).rename("All prescribers")
+    out = pd.concat([out, total], axis=1)
+    out.index = pd.MultiIndex.from_tuples(
+        [(g, c) for g, group in SHARE_COLS.items() for c in group], names=["group", "measure"])
+    return out
+
+
 RULE_COLS = ["rx_per_month", "advanced_share", "generic_share", "branded_other_share",
              "bridge_rate", "commercial_share", "government_share", "peds_share",
              "n_brands", "top_pharmacy_share", "practice_prescribers"]

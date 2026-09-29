@@ -34,7 +34,7 @@ To change which drugs count as the $200 tier, edit `biologic_ref` in
 | `sql/01_build_analytics_layer.sql` | `biologic_ref`, `claims_enriched` (cleaned claims, same grain as source); documents every data caveat |
 | `sql/02_npi_summary.sql` | `npi_summary`: one row per provider |
 | `sql/03_specialty_segments.sql` | `specialty_segments` and `sales_targets` views |
-| `forus_gtm.py` | Economics: unit economics, scorecard, capture curve, sensitivity, target ranking |
+| `forus_gtm.py` | Economics: unit economics, scorecard, capture curve, sensitivity, target ranking, new-patient mix |
 | `part1_gtm.ipynb` | Runs everything end to end, with validation asserts |
 
 ## Key caveats

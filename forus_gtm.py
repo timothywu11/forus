@@ -272,3 +272,39 @@ def breakdown(df: pd.DataFrame, specialty: str, by: str | list[str],
     g["share_of_contribution"] = g["contribution"] / g["contribution"].sum()
     g["roi_year1"] = g["contribution"] / g["acquisition_cost"]
     return g.sort_values("roi_year1", ascending=False)
+
+
+# --- New-patient mix -----------------------------------------------------------
+# Manufacturers value new starts most: a new patient on a biologic is a new revenue
+# stream for them, while a continuing patient is a re-authorization of one they
+# already have. The cost model treats both the same (one authorization per patient
+# per year); this view shows how the specialties differ on that dimension.
+
+def new_patient_mix(df: pd.DataFrame, specialties: list[str] | None = None,
+                    by: str | list[str] = "specialty") -> pd.DataFrame:
+    """New vs continuing patient-drug pairs, as shares and per unit of sales effort.
+
+    Works on specialty_segments (or sales_targets). Volumes are patient-drug pairs
+    before capture_rate, so the per-target figures are the full market a deal reaches.
+    """
+    by = [by] if isinstance(by, str) else list(by)
+    specialties = specialties or CANDIDATES
+    e = with_firm_group(df[df["specialty"].isin(specialties)])
+    if "n_sales_targets" not in e:
+        e["n_sales_targets"] = 1
+    g = e.groupby(by, observed=True).agg(
+        providers=("n_providers", "sum"),
+        sales_targets=("n_sales_targets", "sum"),
+        biologic_pairs=("biologic_pairs", "sum"),
+        biologic_new_pairs=("biologic_new_pairs", "sum"),
+        other_pairs=("other_pairs", "sum"),
+        other_new_pairs=("other_new_pairs", "sum"),
+    )
+    g["biologic_new_share"] = g["biologic_new_pairs"] / g["biologic_pairs"]
+    g["other_new_share"] = g["other_new_pairs"] / g["other_pairs"]
+    g["total_new_share"] = ((g["biologic_new_pairs"] + g["other_new_pairs"])
+                            / (g["biologic_pairs"] + g["other_pairs"]))
+    g["new_biologic_per_provider"] = g["biologic_new_pairs"] / g["providers"]
+    g["new_biologic_per_target"] = g["biologic_new_pairs"] / g["sales_targets"]
+    g["share_of_new_biologic"] = g["biologic_new_pairs"] / g["biologic_new_pairs"].sum()
+    return g.sort_values("new_biologic_per_target", ascending=False)

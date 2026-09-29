@@ -300,6 +300,27 @@ def workload(rx_monthly: pd.DataFrame, assignments: pd.DataFrame,
     return out
 
 
+def observed_growth(df: pd.DataFrame, labels, horizon_months: int = 12) -> pd.Series:
+    """Growth factor per segment if onboarding continues at the observed pace.
+
+    New prescribers per month = prescribers whose first month is after the first month
+    in the data, divided by the number of months after the first. Factor =
+    (current prescribers + monthly pace x horizon) / current prescribers.
+
+    Caveat: the extract only includes prescribers with >= 35 scripts, so the latest
+    months under-count joiners (they haven't reached the floor yet). Treat the result
+    as a conservative status-quo scenario.
+    """
+    d = prepare(df).assign(segment=labels)
+    first = pd.to_datetime(d["first_month"])
+    start, end = first.min(), first.max()
+    months_after = (end.year - start.year) * 12 + (end.month - start.month)
+    joiners = d[first > start].groupby("segment").size()
+    total = d.groupby("segment").size()
+    pace = joiners.reindex(total.index, fill_value=0) / max(months_after, 1)
+    return ((total + pace * horizon_months) / total).rename("growth_factor")
+
+
 def staffing_forecast(current: pd.DataFrame, growth: dict[str, float] | float,
                       a: dict = OPS_ASSUMPTIONS) -> pd.DataFrame:
     """FTE needed if each segment's prescriber count grows by the given factor.

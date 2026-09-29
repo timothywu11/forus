@@ -341,6 +341,49 @@ def staffing_forecast(current: pd.DataFrame, growth: dict[str, float] | float,
     return base
 
 
+def resource_allocation(rx_monthly: pd.DataFrame, assignments: pd.DataFrame, month: str,
+                        growth: dict[str, float] | None = None, automation_share: float = 0.5,
+                        price_advanced: float = 200.0, price_other: float = 10.0,
+                        a: dict = OPS_ASSUMPTIONS) -> pd.DataFrame:
+    """Split one month's Ops hours by skill level, size an automation lever, and rank
+    segments by value per Ops hour.
+
+    - Senior FTE: hours on advanced/biologic scripts (appeals, bridge, specialty pharmacy).
+      Standard FTE: hours on routine (generic / other branded) scripts.
+    - Automation: FTE freed if `automation_share` of routine hours is automated.
+    - Revenue per Ops hour: illustrative, using Part 1's per-script pricing.
+    - With `growth` (e.g. observed_growth()), adds the same columns 12 months out, scaling
+      each segment's hours by its growth factor (hours per prescriber held constant).
+    """
+    fte_month = a["fte_hours_per_year"] / 12
+    d = rx_monthly[rx_monthly["rx_month"] == month].merge(
+        assignments[["prescriber_id", "segment"]], on="prescriber_id")
+    adv = d["drug_class"] == "advanced_systemic"
+    g = pd.DataFrame({
+        "advanced_scripts": d[adv].groupby("segment")["n"].sum(),
+        "routine_scripts": d[~adv].groupby("segment")["n"].sum(),
+    }).fillna(0)
+    g["advanced_hours"] = g["advanced_scripts"] * a["minutes_advanced"] / 60
+    g["routine_hours"] = g["routine_scripts"] * a["minutes_other"] / 60
+    g["senior_fte"] = g["advanced_hours"] / fte_month
+    g["standard_fte"] = g["routine_hours"] / fte_month
+    g["fte_saved_by_automation"] = g["routine_hours"] * automation_share / fte_month
+    g["revenue_per_ops_hour"] = (
+        (g["advanced_scripts"] * price_advanced + g["routine_scripts"] * price_other)
+        / (g["advanced_hours"] + g["routine_hours"]))
+    if growth is not None:
+        f = pd.Series(growth).reindex(g.index).fillna(1.0)
+        g["future_senior_fte"] = g["senior_fte"] * f
+        g["future_standard_fte"] = g["standard_fte"] * f
+        g["future_fte_saved_by_automation"] = g["fte_saved_by_automation"] * f
+    total = g.drop(columns="revenue_per_ops_hour").sum()
+    total["revenue_per_ops_hour"] = (
+        (total["advanced_scripts"] * price_advanced + total["routine_scripts"] * price_other)
+        / (total["advanced_hours"] + total["routine_hours"]))
+    g.loc["Total"] = total
+    return g
+
+
 # What each segment means for Provider Operations (kept next to the code so the
 # notebook, the write-up and any dashboard use the same wording).
 OPS_PLAYBOOK = pd.DataFrame([
